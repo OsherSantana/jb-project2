@@ -44,55 +44,48 @@ const state = {
     chartInterval: null
 };
 
+
+
 // API URLs
 const API_URLS = {
     base: 'https://api.coingecko.com/api/v3',
     cryptoCompare: 'https://min-api.cryptocompare.com/data'
 };
 
-// API Service with jQuery AJAX
+// API Service with Fetch
 const api = {
-    getCurrencies: function () {
-        return $.ajax({
-            url: `${API_URLS.base}/coins/list`,
-            method: 'GET',
-            dataType: 'json',
-            success: function (response) {
-                return response.slice(0, 100);
-            },
-            error: function (error) {
-                console.error('Error fetching currencies:', error);
-                throw error;
-            }
-        });
+    async getCurrencies() {
+        try {
+            const response = await fetch(`${API_URLS.base}/coins/list`);
+            if (!response.ok) throw new Error('Network response was not ok');
+            const data = await response.json();
+            return data.slice(0, 100);
+        } catch (error) {
+            console.error('Error fetching currencies:', error);
+            throw error;
+        }
     },
 
-    getCurrencyDetails: withCache(function (id) {
-        return $.ajax({
-            url: `${API_URLS.base}/coins/${id}`,
-            method: 'GET',
-            dataType: 'json',
-            error: function (error) {
-                console.error('Error fetching currency details:', error);
-                throw error;
-            }
-        });
+    getCurrencyDetails: withCache(async function (id) {
+        try {
+            const response = await fetch(`${API_URLS.base}/coins/${id}`);
+            if (!response.ok) throw new Error('Network response was not ok');
+            return await response.json();
+        } catch (error) {
+            console.error('Error fetching currency details:', error);
+            throw error;
+        }
     }),
 
-    getLivePrices: function (symbols) {
-        return $.ajax({
-            url: `${API_URLS.cryptoCompare}/pricemulti`,
-            method: 'GET',
-            dataType: 'json',
-            data: {
-                fsyms: symbols.join(','),
-                tsyms: 'USD'
-            },
-            error: function (error) {
-                console.error('Error fetching live prices:', error);
-                throw error;
-            }
-        });
+    async getLivePrices(symbols) {
+        try {
+            const response = await fetch(`${API_URLS.cryptoCompare}/pricemulti?fsyms=${symbols.join(',')}&tsyms=USD`);
+            if (!response.ok) throw new Error('Network response was not ok');
+            return await response.json();
+        } catch (error) {
+            console.error('Error fetching live prices:', error);
+            throw error;
+        }
     }
 };
 
@@ -162,6 +155,58 @@ const initializeChart = function () {
     return chart;
 };
 
+// Event Handlers
+const handleMoreInfo = async function (currencyId) {
+    const card = document.querySelector(`[data-currency-id="${currencyId}"]`);
+    const infoDiv = card.querySelector('.currency-info');
+
+    if (infoDiv.style.display === 'none') {
+        showLoading();
+        try {
+            const details = await api.getCurrencyDetails(currencyId);
+            const prices = details.market_data.current_price;
+            infoDiv.innerHTML = `
+                <img src="${details.image.small}" class="mb-2" alt="${details.name}">
+                <p class="mb-1">USD: $${prices.usd}</p>
+                <p class="mb-1">EUR: €${prices.eur}</p>
+                <p class="mb-1">ILS: ₪${prices.ils}</p>
+            `;
+            infoDiv.style.display = 'block';
+        } catch (error) {
+            infoDiv.innerHTML = '<p class="text-danger">Error loading details</p>';
+            infoDiv.style.display = 'block';
+        } finally {
+            hideLoading();
+        }
+    } else {
+        infoDiv.style.display = 'none';
+    }
+};
+
+const handleToggleSelection = function (currencyId) {
+    const currency = state.currencies.find(function (c) {
+        return c.id === currencyId;
+    });
+    if (!currency) return;
+
+    const isSelected = Boolean(state.selectedCurrencies.find(function (c) {
+        return c.id === currencyId;
+    }));
+
+    if (isSelected) {
+        state.selectedCurrencies = state.selectedCurrencies.filter(function (c) {
+            return c.id !== currencyId;
+        });
+    } else if (state.selectedCurrencies.length >= 5) {
+        showReportModal(currency);
+        return;
+    } else {
+        state.selectedCurrencies.push(currency);
+    }
+
+    updateUI();
+};
+
 // Modal Management
 const showReportModal = function (newCurrency) {
     const modalContent = `
@@ -190,63 +235,6 @@ const showReportModal = function (newCurrency) {
     document.querySelector('#reportModal .modal-content').innerHTML = modalContent;
     const reportModal = new bootstrap.Modal(document.getElementById('reportModal'));
     reportModal.show();
-};
-
-// Event Handlers
-const handleMoreInfo = async function (currencyId) {
-    const infoDiv = $(`[data-currency-id="${currencyId}"] .currency-info`);
-
-    if (infoDiv.is(':hidden')) {
-        showLoading();
-
-        $.ajax({
-            url: `${API_URLS.base}/coins/${currencyId}`,
-            method: 'GET',
-            dataType: 'json',
-            success: function (details) {
-                const prices = details.market_data.current_price;
-                infoDiv.html(`
-                    <img src="${details.image.small}" class="mb-2" alt="${details.name}">
-                    <p class="mb-1">USD: $${prices.usd}</p>
-                    <p class="mb-1">EUR: €${prices.eur}</p>
-                    <p class="mb-1">ILS: ₪${prices.ils}</p>
-                `);
-            },
-            error: function () {
-                infoDiv.html('<p class="text-danger">Error loading details</p>');
-            },
-            complete: function () {
-                hideLoading();
-                infoDiv.slideToggle();
-            }
-        });
-    } else {
-        infoDiv.slideToggle();
-    }
-};
-
-const handleToggleSelection = function (currencyId) {
-    const currency = state.currencies.find(function (c) {
-        return c.id === currencyId;
-    });
-    if (!currency) return;
-
-    const isSelected = Boolean(state.selectedCurrencies.find(function (c) {
-        return c.id === currencyId;
-    }));
-
-    if (isSelected) {
-        state.selectedCurrencies = state.selectedCurrencies.filter(function (c) {
-            return c.id !== currencyId;
-        });
-    } else if (state.selectedCurrencies.length >= 5) {
-        showReportModal(currency);
-        return;
-    } else {
-        state.selectedCurrencies.push(currency);
-    }
-
-    updateUI();
 };
 
 const handleReplaceSelection = function (oldId, newId) {
